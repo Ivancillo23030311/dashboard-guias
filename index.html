@@ -30,91 +30,127 @@
     // =====================================================================
     // NORMALIZACIÓN DE MOTIVOS DE CANCELACIÓN
     // -----------------------------------------------------------------
-    // Agrega/ajusta los patrones (regex) según los valores reales que
-    // encuentres en tu columna "incidencia". Cada patrón se evalúa sobre
-    // el texto ya en minúsculas y sin acentos.
-    // Si un valor no matchea ningún patrón, se conserva TAL CUAL (no se
-    // pierde), para que puedas detectar en la tabla/gráfico qué strings
-    // todavía no están categorizados y decidir a qué grupo mandarlos.
+    // Mapeo construido a partir de los 21 valores reales encontrados en la
+    // pestaña "LI Q4 TOREO" del sheet (columna "Motivo Retorn"), validado
+    // con Freddy el 26/ago/2026:
+    //   - "Rechazo por el cliente" -> categoría propia (no es lo mismo que
+    //     "ausente": aquí el cliente SÍ está pero rechaza el paquete).
+    //   - "Cancelado por HH" -> error de sistema (confirmado por Freddy).
+    //   - "carro" / "Moto" / "UNIDAD" -> basura de captura (tipo de
+    //     vehículo metido por error en la columna de motivo), se EXCLUYEN
+    //     del análisis por completo.
+    //   - ":-:" / "Motivo Retorno" -> artefactos de celdas fusionadas /
+    //     encabezado repetido, también se excluyen.
+    // -----------------------------------------------------------------
+    // 1) EXACT_MAP: match exacto (case/acentos-insensitive) para los
+    //    valores ya conocidos -> resultado inmediato y confiable.
+    // 2) CATEGORIAS_CANCELACION: reglas por patrón (regex) como respaldo
+    //    para valores NUEVOS que aparezcan después y no estén en el mapa.
+    // 3) EXCLUIR_PATTERNS: valores que no son un motivo real y se
+    //    descartan del dataset completo (no cuentan en gráfico/tabla).
     // =====================================================================
-    const CATEGORIAS_CANCELACION = [
-      {
-        cat: 'Cliente ausente',
-        patterns: [
-          /\bausente/,
-          /no se encontraba.*cliente/,
-          /cliente no se encontraba/,
-          /nadie atendio/,
-          /no atendieron/,
-          /cliente no estaba/,
-          /no habia nadie/,
-        ],
-      },
-      {
-        cat: 'Domicilio Incorrecto',
-        patterns: [
-          /domicilio incorrect/,
-          /direccion incorrect/,
-          /domicilio erron/,
-          /direccion erron/,
-          /domicilio equivocad/,
-          /direccion equivocad/,
-        ],
-      },
-      {
-        cat: 'Domicilio no visitado',
-        patterns: [
-          /no visitad/,
-          /sin visitar/,
-          /no se visito/,
-          /ruta no completad/,
-          /no se realizo la visita/,
-          /no realizada la visita/,
-        ],
-      },
-      {
-        cat: 'Direccion insuficiente',
-        patterns: [
-          /direccion insuficiente/,
-          /domicilio insuficiente/,
-          /datos insuficientes/,
-          /falta.*referencia/,
-          /sin referencias/,
-          /domicilio incompleto/,
-          /direccion incompleta/,
-        ],
-      },
-      {
-        cat: 'Extraviado/Robado',
-        patterns: [
-          /extraviad/,
-          /robad/,
-          /\brobo\b/,
-          /perdid/,
-          /hurto/,
-          /mercancia extraviada/,
-        ],
-      },
-    ];
 
 
     function stripAccents(str) {
       return str
         .toString()
         .toLowerCase()
+        .trim()
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '');
     }
 
 
+    const EXACT_MAP = {
+      'cliente ausente': 'Cliente ausente',
+      'cliente no se encuentra': 'Cliente ausente',
+
+
+      'dirreccion erronea / no se puede comunicar con el cliente': 'Domicilio Incorrecto',
+      'direccion incorrecta / fura de cobertura': 'Domicilio Incorrecto',
+      'fuera de cobertura': 'Domicilio Incorrecto',
+      'domicilio incorrecto': 'Domicilio Incorrecto',
+
+
+      'regresa/falta de evidencias': 'Domicilio no visitado',
+
+
+      'rechazo por el cliente': 'Rechazo del Cliente',
+
+
+      'cancelado por hh': 'Error de Sistema',
+      'investigar / cancelado por sistema': 'Error de Sistema',
+
+
+      'danado': 'Otros',
+      'duplicados': 'Otros',
+      'otros': 'Otros',
+      'cancelado': 'Otros',
+      'cubbitos retorno': 'Otros',
+      'sla pq mas atrazado': 'Otros',
+    };
+
+
+    // Valores que NO son un motivo real (basura de captura / artefactos
+    // de celdas fusionadas): se excluyen del dataset por completo.
+    const EXCLUIR_EXACT = new Set([
+      'carro',
+      'moto',
+      'unidad',
+      ':-:',
+      'motivo retorno',
+    ]);
+
+
+    // Respaldo por patrón para valores nuevos no listados arriba.
+    const CATEGORIAS_CANCELACION = [
+      {
+        cat: 'Cliente ausente',
+        patterns: [/\bausente/, /cliente no se encontraba/, /nadie atendio/, /no atendieron/, /no habia nadie/],
+      },
+      {
+        cat: 'Domicilio Incorrecto',
+        patterns: [/domicilio incorrect/, /direccion incorrect/, /domicilio erron/, /direccion erron/, /fuera de cobertura/, /fura de cobertura/],
+      },
+      {
+        cat: 'Domicilio no visitado',
+        patterns: [/no visitad/, /sin visitar/, /no se visito/, /falta.*evidencia/, /ruta no completad/],
+      },
+      {
+        cat: 'Direccion insuficiente',
+        patterns: [/direccion insuficiente/, /domicilio insuficiente/, /datos insuficientes/, /falta.*referencia/, /domicilio incompleto/],
+      },
+      {
+        cat: 'Extraviado/Robado',
+        patterns: [/extraviad/, /robad/, /\brobo\b/, /perdid/, /hurto/],
+      },
+      {
+        cat: 'Rechazo del Cliente',
+        patterns: [/rechaz/],
+      },
+      {
+        cat: 'Error de Sistema',
+        patterns: [/cancelado por hh/, /\bhh\b/, /cancelado por sistema/, /error de sistema/],
+      },
+    ];
+
+
+    // Devuelve null si el registro debe excluirse por completo del dataset.
     function normalizeIncidencia(raw) {
       if (!raw || !raw.toString().trim()) return 'Sin Incidencia';
       const clean = stripAccents(raw);
+
+
+      if (EXCLUIR_EXACT.has(clean)) return null;
+      if (EXACT_MAP[clean]) return EXACT_MAP[clean];
+
+
       for (const rule of CATEGORIAS_CANCELACION) {
         if (rule.patterns.some((p) => p.test(clean))) return rule.cat;
       }
-      // No matcheó ninguna regla: se conserva el valor original
-      // para poder detectarlo y agregar el patrón correspondiente.
+      // No matcheó nada conocido: se conserva el valor original para
+      // poder detectarlo en la tabla ("sin match") y decidir a qué
+      // categoría agregarlo (o si hay que excluirlo también).
       return raw.toString().trim();
     }
     // =====================================================================
@@ -126,13 +162,14 @@
       const [searchTerm, setSearchTerm] = useState('');
       const [selectedGuia, setSelectedGuia] = useState(null);
       const [soloSinCategorizar, setSoloSinCategorizar] = useState(false);
+      const [excluidosCount, setExcluidosCount] = useState(0);
 
 
       const chartRef = useRef(null);
       const chartInstance = useRef(null);
 
 
-      const CATEGORIAS_VALIDAS = CATEGORIAS_CANCELACION.map((c) => c.cat);
+      const CATEGORIAS_VALIDAS = [...new Set([...CATEGORIAS_CANCELACION.map((c) => c.cat), ...Object.values(EXACT_MAP)])];
 
 
       const parseGoogleDate = (dateStr) => {
@@ -182,12 +219,13 @@
 
 
             const incidenciaOriginal = getVal(2) || 'Sin Incidencia';
+            const incidenciaNormalizada = normalizeIncidencia(incidenciaOriginal);
 
 
             return {
               fecha: parseGoogleDate(getVal(0)),
               id: getVal(1) || `GUI-${i + 1}`,
-              incidencia: normalizeIncidencia(incidenciaOriginal),
+              incidencia: incidenciaNormalizada, // null = excluir del dataset
               incidenciaOriginal,
               almacen: rawAlmacen || 'Sin Almacén',
               detalles: getVal(6) || '',
@@ -195,7 +233,12 @@
           });
 
 
-          setGuias(parsed);
+          const excluidos = parsed.filter((g) => g.incidencia === null).length;
+          const validos = parsed.filter((g) => g.incidencia !== null);
+
+
+          setExcluidosCount(excluidos);
+          setGuias(validos);
         } catch (err) {
           console.error('Error al cargar Google Sheet:', err);
         } finally {
@@ -314,6 +357,14 @@
               {loading ? 'Cargando...' : 'Actualizar Datos'}
             </button>
           </header>
+
+
+          {/* Aviso de registros excluidos (basura de captura: carro/moto/unidad/artefactos) */}
+          {excluidosCount > 0 && (
+            <div className="bg-slate-800/60 border border-slate-700 text-slate-400 text-xs rounded-lg p-3">
+              ℹ️ Se excluyeron {excluidosCount} registro(s) del análisis por no representar un motivo real de cancelación (ej. "carro", "Moto", "UNIDAD" o artefactos de celdas fusionadas).
+            </div>
+          )}
 
 
           {/* Aviso de valores sin categorizar */}
