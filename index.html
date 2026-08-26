@@ -69,7 +69,7 @@
               fecha: parseGoogleDate(getVal(0)),
               id: getVal(1) || `GUI-${i+1}`,
               incidencia: getVal(2) || 'Sin Incidencia',
-              // Mapeamos el Almacén desde el campo del estatus (columna 5)
+              // Asignación limpia del valor de almacén (tomado de la col 5)
               almacen: getVal(5) || 'Sin Almacén',
               detalles: getVal(6) || ''
             };
@@ -201,7 +201,7 @@
             </div>
           </div>
 
-          {/* Tabla Limpia de Guías */}
+          {/* Tabla de Guías con Columna ALMACÉN */}
           <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-x-auto">
             <table className="w-full text-left text-sm text-slate-300">
               <thead className="bg-slate-900 text-slate-400 uppercase text-xs">
