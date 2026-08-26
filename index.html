@@ -69,8 +69,7 @@
               fecha: parseGoogleDate(getVal(0)),
               id: getVal(1) || `GUI-${i+1}`,
               incidencia: getVal(2) || 'Sin Incidencia',
-              motivo: getVal(3) || '-',
-              estado: getVal(4) === 'true' || getVal(4) === 'TRUE' ? 'Con Incidencia' : (getVal(4) || 'Normal'),
+              // Mapeamos el Almacén desde el campo del estatus (columna 5)
               almacen: getVal(5) || 'Sin Almacén',
               detalles: getVal(6) || ''
             };
@@ -93,17 +92,15 @@
           terms.some(t => 
             g.id.toLowerCase().includes(t) || 
             g.almacen.toLowerCase().includes(t) || 
-            g.incidencia.toLowerCase().includes(t) ||
-            g.motivo.toLowerCase().includes(t)
+            g.incidencia.toLowerCase().includes(t)
           )
         );
       }, [searchTerm, guias]);
 
-      // Generar o actualizar gráfica de pastel
+      // Gráfica de Pastel
       useEffect(() => {
         if (!chartRef.current || guiasFiltradas.length === 0) return;
 
-        // Contar frecuencia de incidencias
         const counts = {};
         guiasFiltradas.forEach(g => {
           const inc = g.incidencia || 'Sin Especificar';
@@ -156,9 +153,9 @@
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF();
         doc.text("Reporte de Guías e Incidencias", 14, 15);
-        const tableData = guiasFiltradas.map(g => [g.id, g.fecha, g.almacen, g.motivo, g.incidencia, g.estado]);
+        const tableData = guiasFiltradas.map(g => [g.id, g.fecha, g.almacen, g.incidencia]);
         doc.autoTable({
-          head: [['ID', 'Fecha', 'Almacén', 'Motivo', 'Incidencia', 'Estado']],
+          head: [['ID Guía', 'Fecha', 'Almacén', 'Incidencia']],
           body: tableData,
           startY: 20
         });
@@ -204,7 +201,7 @@
             </div>
           </div>
 
-          {/* Tabla de Guías */}
+          {/* Tabla Limpia de Guías */}
           <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-x-auto">
             <table className="w-full text-left text-sm text-slate-300">
               <thead className="bg-slate-900 text-slate-400 uppercase text-xs">
@@ -212,9 +209,7 @@
                   <th className="p-3">ID Guía</th>
                   <th className="p-3">Fecha</th>
                   <th className="p-3">Almacén</th>
-                  <th className="p-3">Motivo</th>
                   <th className="p-3">Incidencia</th>
-                  <th className="p-3">Estado</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/50">
@@ -222,14 +217,12 @@
                   <tr key={g.id} onClick={() => setSelectedGuia(g)} className="hover:bg-slate-700/50 cursor-pointer">
                     <td className="p-3 font-semibold text-sky-400">{g.id}</td>
                     <td className="p-3">{g.fecha}</td>
-                    <td className="p-3">{g.almacen}</td>
-                    <td className="p-3">{g.motivo}</td>
-                    <td className="p-3 text-rose-400 font-medium">{g.incidencia}</td>
                     <td className="p-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${g.estado === 'Con Incidencia' ? 'bg-rose-950 text-rose-300 border border-rose-800' : 'bg-emerald-950 text-emerald-300 border border-emerald-800'}`}>
-                        {g.estado}
+                      <span className="bg-slate-900 text-emerald-400 border border-emerald-800/60 px-2.5 py-1 rounded-md text-xs font-semibold">
+                        {g.almacen}
                       </span>
                     </td>
+                    <td className="p-3 text-rose-400 font-medium">{g.incidencia}</td>
                   </tr>
                 ))}
               </tbody>
@@ -244,7 +237,6 @@
                 <div className="text-sm space-y-2 text-slate-300">
                   <p><strong>Fecha:</strong> {selectedGuia.fecha}</p>
                   <p><strong>Almacén:</strong> {selectedGuia.almacen}</p>
-                  <p><strong>Motivo:</strong> {selectedGuia.motivo}</p>
                   <p><strong>Incidencia:</strong> {selectedGuia.incidencia}</p>
                   <p><strong>Detalles:</strong> {selectedGuia.detalles || 'Sin observaciones adicionales'}</p>
                 </div>
