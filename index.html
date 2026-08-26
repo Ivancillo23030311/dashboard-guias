@@ -21,18 +21,119 @@
 <body class="bg-slate-900 text-slate-100 min-h-screen">
   <div id="root"></div>
 
+
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef } = React;
     const SHEET_ID = '1taS5FDZBKDV0C3dKAFM4aheN9Pn3AF56EHNdtjHN7Lk';
+
+
+    // =====================================================================
+    // NORMALIZACIÓN DE MOTIVOS DE CANCELACIÓN
+    // -----------------------------------------------------------------
+    // Agrega/ajusta los patrones (regex) según los valores reales que
+    // encuentres en tu columna "incidencia". Cada patrón se evalúa sobre
+    // el texto ya en minúsculas y sin acentos.
+    // Si un valor no matchea ningún patrón, se conserva TAL CUAL (no se
+    // pierde), para que puedas detectar en la tabla/gráfico qué strings
+    // todavía no están categorizados y decidir a qué grupo mandarlos.
+    // =====================================================================
+    const CATEGORIAS_CANCELACION = [
+      {
+        cat: 'Cliente ausente',
+        patterns: [
+          /\bausente/,
+          /no se encontraba.*cliente/,
+          /cliente no se encontraba/,
+          /nadie atendio/,
+          /no atendieron/,
+          /cliente no estaba/,
+          /no habia nadie/,
+        ],
+      },
+      {
+        cat: 'Domicilio Incorrecto',
+        patterns: [
+          /domicilio incorrect/,
+          /direccion incorrect/,
+          /domicilio erron/,
+          /direccion erron/,
+          /domicilio equivocad/,
+          /direccion equivocad/,
+        ],
+      },
+      {
+        cat: 'Domicilio no visitado',
+        patterns: [
+          /no visitad/,
+          /sin visitar/,
+          /no se visito/,
+          /ruta no completad/,
+          /no se realizo la visita/,
+          /no realizada la visita/,
+        ],
+      },
+      {
+        cat: 'Direccion insuficiente',
+        patterns: [
+          /direccion insuficiente/,
+          /domicilio insuficiente/,
+          /datos insuficientes/,
+          /falta.*referencia/,
+          /sin referencias/,
+          /domicilio incompleto/,
+          /direccion incompleta/,
+        ],
+      },
+      {
+        cat: 'Extraviado/Robado',
+        patterns: [
+          /extraviad/,
+          /robad/,
+          /\brobo\b/,
+          /perdid/,
+          /hurto/,
+          /mercancia extraviada/,
+        ],
+      },
+    ];
+
+
+    function stripAccents(str) {
+      return str
+        .toString()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+    }
+
+
+    function normalizeIncidencia(raw) {
+      if (!raw || !raw.toString().trim()) return 'Sin Incidencia';
+      const clean = stripAccents(raw);
+      for (const rule of CATEGORIAS_CANCELACION) {
+        if (rule.patterns.some((p) => p.test(clean))) return rule.cat;
+      }
+      // No matcheó ninguna regla: se conserva el valor original
+      // para poder detectarlo y agregar el patrón correspondiente.
+      return raw.toString().trim();
+    }
+    // =====================================================================
+
 
     function App() {
       const [guias, setGuias] = useState([]);
       const [loading, setLoading] = useState(true);
       const [searchTerm, setSearchTerm] = useState('');
       const [selectedGuia, setSelectedGuia] = useState(null);
-      
+      const [soloSinCategorizar, setSoloSinCategorizar] = useState(false);
+
+
       const chartRef = useRef(null);
       const chartInstance = useRef(null);
+
+
+      const CATEGORIAS_VALIDAS = CATEGORIAS_CANCELACION.map((c) => c.cat);
+
 
       const parseGoogleDate = (dateStr) => {
         if (!dateStr) return '';
@@ -48,6 +149,7 @@
         return dateStr;
       };
 
+
       const fetchSheetData = async () => {
         setLoading(true);
         try {
@@ -57,13 +159,16 @@
           const jsonText = text.substring(47, text.length - 2);
           const json = JSON.parse(jsonText);
 
+
           const rows = json.table.rows;
-          
+
+
           const parsed = rows.map((row, i) => {
             const getVal = (idx) => {
               if (!row.c || !row.c[idx]) return '';
               return row.c[idx].f?.toString() || row.c[idx].v?.toString() || '';
             };
+
 
             // Busca el texto del almacén descartando valores booleanos (TRUE / FALSE)
             let rawAlmacen = '';
@@ -75,53 +180,77 @@
               }
             }
 
+
+            const incidenciaOriginal = getVal(2) || 'Sin Incidencia';
+
+
             return {
               fecha: parseGoogleDate(getVal(0)),
-              id: getVal(1) || `GUI-${i+1}`,
-              incidencia: getVal(2) || 'Sin Incidencia',
+              id: getVal(1) || `GUI-${i + 1}`,
+              incidencia: normalizeIncidencia(incidenciaOriginal),
+              incidenciaOriginal,
               almacen: rawAlmacen || 'Sin Almacén',
-              detalles: getVal(6) || ''
+              detalles: getVal(6) || '',
             };
           });
 
+
           setGuias(parsed);
         } catch (err) {
-          console.error("Error al cargar Google Sheet:", err);
+          console.error('Error al cargar Google Sheet:', err);
         } finally {
           setLoading(false);
         }
       };
 
+
       useEffect(() => { fetchSheetData(); }, []);
 
+
       const guiasFiltradas = useMemo(() => {
-        if (!searchTerm.trim()) return guias;
-        const terms = searchTerm.split(/[\s,]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
-        return guias.filter(g => 
-          terms.some(t => 
-            g.id.toLowerCase().includes(t) || 
-            g.almacen.toLowerCase().includes(t) || 
+        let base = guias;
+        if (soloSinCategorizar) {
+          base = base.filter((g) => !CATEGORIAS_VALIDAS.includes(g.incidencia) && g.incidencia !== 'Sin Incidencia');
+        }
+        if (!searchTerm.trim()) return base;
+        const terms = searchTerm.split(/[\s,]+/).map((t) => t.trim().toLowerCase()).filter(Boolean);
+        return base.filter((g) =>
+          terms.some((t) =>
+            g.id.toLowerCase().includes(t) ||
+            g.almacen.toLowerCase().includes(t) ||
             g.incidencia.toLowerCase().includes(t)
           )
         );
-      }, [searchTerm, guias]);
+      }, [searchTerm, guias, soloSinCategorizar]);
+
+
+      // Cuenta cuántos registros quedaron sin categorizar (para el aviso)
+      const sinCategorizarCount = useMemo(
+        () => guias.filter((g) => !CATEGORIAS_VALIDAS.includes(g.incidencia) && g.incidencia !== 'Sin Incidencia').length,
+        [guias]
+      );
+
 
       // Gráfica de Pastel
       useEffect(() => {
         if (!chartRef.current || guiasFiltradas.length === 0) return;
 
+
         const counts = {};
-        guiasFiltradas.forEach(g => {
+        guiasFiltradas.forEach((g) => {
           const inc = g.incidencia || 'Sin Especificar';
           counts[inc] = (counts[inc] || 0) + 1;
         });
 
+
         const labels = Object.keys(counts);
         const data = Object.values(counts);
+
 
         if (chartInstance.current) {
           chartInstance.current.destroy();
         }
+
 
         const ctx = chartRef.current.getContext('2d');
         chartInstance.current = new Chart(ctx, {
@@ -131,12 +260,12 @@
             datasets: [{
               data: data,
               backgroundColor: [
-                '#f43f5e', '#38bdf8', '#fbbf24', '#a855f7', 
-                '#34d399', '#fb923c', '#e879f9', '#94a3b8'
+                '#F43F5E', '#38BDF8', '#FBBF24', '#A855F7',
+                '#34D399', '#FB923C', '#E879F9', '#94A3B8',
               ],
               borderWidth: 2,
-              borderColor: '#1e293b'
-            }]
+              borderColor: '#1E293B',
+            }],
           },
           options: {
             responsive: true,
@@ -144,52 +273,73 @@
             plugins: {
               legend: {
                 position: 'right',
-                labels: { color: '#cbd5e1', font: { size: 12 } }
-              }
-            }
-          }
+                labels: { color: '#CBD5E1', font: { size: 12 } },
+              },
+            },
+          },
         });
       }, [guiasFiltradas]);
+
 
       const exportCSV = () => {
         const ws = XLSX.utils.json_to_sheet(guiasFiltradas);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Guias");
-        XLSX.writeFile(wb, "Reporte_Guias.csv", { bookType: "csv" });
+        XLSX.utils.book_append_sheet(wb, ws, 'Guias');
+        XLSX.writeFile(wb, 'Reporte_Guias.csv', { bookType: 'csv' });
       };
+
 
       const exportPDF = () => {
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF();
-        doc.text("Reporte de Guías e Incidencias", 14, 15);
-        const tableData = guiasFiltradas.map(g => [g.id, g.fecha, g.almacen, g.incidencia]);
+        doc.text('Reporte de Guías e Incidencias', 14, 15);
+        const tableData = guiasFiltradas.map((g) => [g.id, g.fecha, g.almacen, g.incidencia]);
         doc.autoTable({
           head: [['ID Guía', 'Fecha', 'Almacén', 'Incidencia']],
           body: tableData,
-          startY: 20
+          startY: 20,
         });
-        doc.save("Reporte_Guias.pdf");
+        doc.save('Reporte_Guias.pdf');
       };
+
 
       return (
         <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
           <header className="flex flex-col md:flex-row justify-between items-center border-b border-slate-800 pb-4 gap-4">
             <div>
               <h1 className="text-2xl font-bold text-sky-400">Dashboard de Guías e Incidencias</h1>
-              <p className="text-xs text-slate-400 mt-1">Conexión directa a Google Sheets</p>
+              <p className="text-xs text-slate-400 mt-1">Conexión directa a Google Sheets · Motivos unificados</p>
             </div>
             <button onClick={fetchSheetData} className="bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition">
               {loading ? 'Cargando...' : 'Actualizar Datos'}
             </button>
           </header>
 
+
+          {/* Aviso de valores sin categorizar */}
+          {sinCategorizarCount > 0 && (
+            <div className="bg-amber-900/30 border border-amber-700/60 text-amber-300 text-sm rounded-lg p-3 flex justify-between items-center">
+              <span>
+                ⚠️ {sinCategorizarCount} registro(s) no matchearon ninguna de las 5 categorías y se muestran con su texto original.
+              </span>
+              <button
+                onClick={() => setSoloSinCategorizar((v) => !v)}
+                className="bg-amber-700/60 hover:bg-amber-700 text-white px-3 py-1 rounded text-xs whitespace-nowrap"
+              >
+                {soloSinCategorizar ? 'Ver todos' : 'Ver solo estos'}
+              </button>
+            </div>
+          )}
+
+
           {/* Gráfico de Pastel */}
           <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 space-y-4">
-            <h2 className="text-lg font-bold text-sky-400">Distribución de Incidencias</h2>
+            <h2 className="text-lg font-bold text-sky-400">Distribución de Incidencias (unificadas)</h2>
             <div className="h-64 relative">
               <canvas ref={chartRef}></canvas>
             </div>
           </div>
+
 
           {/* Multibuscador */}
           <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 space-y-3">
@@ -210,6 +360,7 @@
             </div>
           </div>
 
+
           {/* Tabla de Guías con Almacén Filtrado */}
           <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-x-auto">
             <table className="w-full text-left text-sm text-slate-300">
@@ -222,21 +373,28 @@
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/50">
-                {guiasFiltradas.map(g => (
-                  <tr key={g.id} onClick={() => setSelectedGuia(g)} className="hover:bg-slate-700/50 cursor-pointer">
-                    <td className="p-3 font-semibold text-sky-400">{g.id}</td>
-                    <td className="p-3">{g.fecha}</td>
-                    <td className="p-3">
-                      <span className="bg-slate-900 text-emerald-400 border border-emerald-800/60 px-2.5 py-1 rounded-md text-xs font-semibold">
-                        {g.almacen}
-                      </span>
-                    </td>
-                    <td className="p-3 text-rose-400 font-medium">{g.incidencia}</td>
-                  </tr>
-                ))}
+                {guiasFiltradas.map((g) => {
+                  const noCategorizado = !CATEGORIAS_VALIDAS.includes(g.incidencia) && g.incidencia !== 'Sin Incidencia';
+                  return (
+                    <tr key={g.id} onClick={() => setSelectedGuia(g)} className="hover:bg-slate-700/50 cursor-pointer">
+                      <td className="p-3 font-semibold text-sky-400">{g.id}</td>
+                      <td className="p-3">{g.fecha}</td>
+                      <td className="p-3">
+                        <span className="bg-slate-900 text-emerald-400 border border-emerald-800/60 px-2.5 py-1 rounded-md text-xs font-semibold">
+                          {g.almacen}
+                        </span>
+                      </td>
+                      <td className={`p-3 font-medium ${noCategorizado ? 'text-amber-400' : 'text-rose-400'}`}>
+                        {g.incidencia}
+                        {noCategorizado && <span className="ml-1 text-[10px] text-amber-500">(sin match)</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+
 
           {/* Modal Detalle */}
           {selectedGuia && (
@@ -246,7 +404,10 @@
                 <div className="text-sm space-y-2 text-slate-300">
                   <p><strong>Fecha:</strong> {selectedGuia.fecha}</p>
                   <p><strong>Almacén:</strong> {selectedGuia.almacen}</p>
-                  <p><strong>Incidencia:</strong> {selectedGuia.incidencia}</p>
+                  <p><strong>Incidencia (unificada):</strong> {selectedGuia.incidencia}</p>
+                  {selectedGuia.incidenciaOriginal !== selectedGuia.incidencia && (
+                    <p><strong>Texto original:</strong> {selectedGuia.incidenciaOriginal}</p>
+                  )}
                   <p><strong>Detalles:</strong> {selectedGuia.detalles || 'Sin observaciones adicionales'}</p>
                 </div>
                 <button onClick={() => setSelectedGuia(null)} className="w-full bg-sky-600 hover:bg-sky-500 text-white py-2 rounded-lg font-medium">
@@ -258,6 +419,7 @@
         </div>
       );
     }
+
 
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
