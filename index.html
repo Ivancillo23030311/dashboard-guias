@@ -65,12 +65,21 @@
               return row.c[idx].f?.toString() || row.c[idx].v?.toString() || '';
             };
 
+            // Busca el texto del almacén descartando valores booleanos (TRUE / FALSE)
+            let rawAlmacen = '';
+            for (let idx = 4; idx < (row.c ? row.c.length : 0); idx++) {
+              const val = getVal(idx);
+              if (val && val.toUpperCase() !== 'TRUE' && val.toUpperCase() !== 'FALSE') {
+                rawAlmacen = val;
+                break;
+              }
+            }
+
             return {
               fecha: parseGoogleDate(getVal(0)),
               id: getVal(1) || `GUI-${i+1}`,
               incidencia: getVal(2) || 'Sin Incidencia',
-              // Asignación limpia del valor de almacén (tomado de la col 5)
-              almacen: getVal(5) || 'Sin Almacén',
+              almacen: rawAlmacen || 'Sin Almacén',
               detalles: getVal(6) || ''
             };
           });
@@ -174,7 +183,7 @@
             </button>
           </header>
 
-          {/* Gráfico de Pastel de Incidencias */}
+          {/* Gráfico de Pastel */}
           <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 space-y-4">
             <h2 className="text-lg font-bold text-sky-400">Distribución de Incidencias</h2>
             <div className="h-64 relative">
@@ -201,7 +210,7 @@
             </div>
           </div>
 
-          {/* Tabla de Guías con Columna ALMACÉN */}
+          {/* Tabla de Guías con Almacén Filtrado */}
           <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-x-auto">
             <table className="w-full text-left text-sm text-slate-300">
               <thead className="bg-slate-900 text-slate-400 uppercase text-xs">
