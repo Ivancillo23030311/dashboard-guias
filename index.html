@@ -11,6 +11,8 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <!-- Babel para procesar JSX -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Chart.js para el gráfico de pastel -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- XLSX & jsPDF para descargas -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -20,7 +22,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useMemo } = React;
+    const { useState, useEffect, useMemo, useRef } = React;
     const SHEET_ID = '1taS5FDZBKDV0C3dKAFM4aheN9Pn3AF56EHNdtjHN7Lk';
 
     function App() {
@@ -28,6 +30,23 @@
       const [loading, setLoading] = useState(true);
       const [searchTerm, setSearchTerm] = useState('');
       const [selectedGuia, setSelectedGuia] = useState(null);
+      
+      const chartRef = useRef(null);
+      const chartInstance = useRef(null);
+
+      const parseGoogleDate = (dateStr) => {
+        if (!dateStr) return '';
+        if (dateStr.startsWith('Date(')) {
+          const parts = dateStr.replace('Date(', '').replace(')', '').split(',');
+          if (parts.length >= 3) {
+            const year = parts[0];
+            const month = String(parseInt(parts[1]) + 1).padStart(2, '0');
+            const day = String(parts[2]).padStart(2, '0');
+            return `${day}/${month}/${year}`;
+          }
+        }
+        return dateStr;
+      };
 
       const fetchSheetData = async () => {
         setLoading(true);
@@ -38,15 +57,25 @@
           const jsonText = text.substring(47, text.length - 2);
           const json = JSON.parse(jsonText);
 
-          const parsed = json.table.rows.map((row, i) => ({
-            id: row.c[0]?.v?.toString() || `GUI-${i+1}`,
-            fecha: row.c[1]?.v?.toString() || row.c[1]?.f?.toString() || '',
-            almacen: row.c[2]?.v?.toString() || 'Sin Almacén',
-            motivo: row.c[3]?.v?.toString() || '-',
-            estado: row.c[4]?.v?.toString() || 'Normal',
-            incidencia: row.c[5]?.v?.toString() || 'Sin Incidencia',
-            detalles: row.c[6]?.v?.toString() || ''
-          }));
+          const rows = json.table.rows;
+          
+          const parsed = rows.map((row, i) => {
+            const getVal = (idx) => {
+              if (!row.c || !row.c[idx]) return '';
+              return row.c[idx].f?.toString() || row.c[idx].v?.toString() || '';
+            };
+
+            return {
+              fecha: parseGoogleDate(getVal(0)),
+              id: getVal(1) || `GUI-${i+1}`,
+              incidencia: getVal(2) || 'Sin Incidencia',
+              motivo: getVal(3) || '-',
+              estado: getVal(4) === 'true' || getVal(4) === 'TRUE' ? 'Con Incidencia' : (getVal(4) || 'Normal'),
+              almacen: getVal(5) || 'Sin Almacén',
+              detalles: getVal(6) || ''
+            };
+          });
+
           setGuias(parsed);
         } catch (err) {
           console.error("Error al cargar Google Sheet:", err);
@@ -61,9 +90,60 @@
         if (!searchTerm.trim()) return guias;
         const terms = searchTerm.split(/[\s,]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
         return guias.filter(g => 
-          terms.some(t => g.id.toLowerCase().includes(t) || g.almacen.toLowerCase().includes(t) || g.incidencia.toLowerCase().includes(t))
+          terms.some(t => 
+            g.id.toLowerCase().includes(t) || 
+            g.almacen.toLowerCase().includes(t) || 
+            g.incidencia.toLowerCase().includes(t) ||
+            g.motivo.toLowerCase().includes(t)
+          )
         );
       }, [searchTerm, guias]);
+
+      // Generar o actualizar gráfica de pastel
+      useEffect(() => {
+        if (!chartRef.current || guiasFiltradas.length === 0) return;
+
+        // Contar frecuencia de incidencias
+        const counts = {};
+        guiasFiltradas.forEach(g => {
+          const inc = g.incidencia || 'Sin Especificar';
+          counts[inc] = (counts[inc] || 0) + 1;
+        });
+
+        const labels = Object.keys(counts);
+        const data = Object.values(counts);
+
+        if (chartInstance.current) {
+          chartInstance.current.destroy();
+        }
+
+        const ctx = chartRef.current.getContext('2d');
+        chartInstance.current = new Chart(ctx, {
+          type: 'pie',
+          data: {
+            labels: labels,
+            datasets: [{
+              data: data,
+              backgroundColor: [
+                '#f43f5e', '#38bdf8', '#fbbf24', '#a855f7', 
+                '#34d399', '#fb923c', '#e879f9', '#94a3b8'
+              ],
+              borderWidth: 2,
+              borderColor: '#1e293b'
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                position: 'right',
+                labels: { color: '#cbd5e1', font: { size: 12 } }
+              }
+            }
+          }
+        });
+      }, [guiasFiltradas]);
 
       const exportCSV = () => {
         const ws = XLSX.utils.json_to_sheet(guiasFiltradas);
@@ -97,6 +177,15 @@
             </button>
           </header>
 
+          {/* Gráfico de Pastel de Incidencias */}
+          <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 space-y-4">
+            <h2 className="text-lg font-bold text-sky-400">Distribución de Incidencias</h2>
+            <div className="h-64 relative">
+              <canvas ref={chartRef}></canvas>
+            </div>
+          </div>
+
+          {/* Multibuscador */}
           <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 space-y-3">
             <label className="block text-sm font-semibold text-slate-300">Multibuscador de Guías (Auto-filtrado)</label>
             <textarea
@@ -104,7 +193,7 @@
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Pega aquí guías separadas por comas, espacios o saltos de línea..."
-              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 text-slate-100"
             />
             <div className="flex justify-between items-center text-xs">
               <span className="text-slate-400">Mostrando {guiasFiltradas.length} registros</span>
@@ -115,6 +204,7 @@
             </div>
           </div>
 
+          {/* Tabla de Guías */}
           <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-x-auto">
             <table className="w-full text-left text-sm text-slate-300">
               <thead className="bg-slate-900 text-slate-400 uppercase text-xs">
@@ -136,7 +226,7 @@
                     <td className="p-3">{g.motivo}</td>
                     <td className="p-3 text-rose-400 font-medium">{g.incidencia}</td>
                     <td className="p-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${g.estado.toLowerCase() === 'normal' ? 'bg-emerald-950 text-emerald-300' : 'bg-rose-950 text-rose-300'}`}>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${g.estado === 'Con Incidencia' ? 'bg-rose-950 text-rose-300 border border-rose-800' : 'bg-emerald-950 text-emerald-300 border border-emerald-800'}`}>
                         {g.estado}
                       </span>
                     </td>
@@ -146,6 +236,7 @@
             </table>
           </div>
 
+          {/* Modal Detalle */}
           {selectedGuia && (
             <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
               <div className="bg-slate-800 border border-slate-700 p-6 rounded-2xl max-w-md w-full space-y-4">
