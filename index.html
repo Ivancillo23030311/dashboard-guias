@@ -10,7 +10,7 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <!-- Babel para procesar JSX -->
-  <script src="https://unpkg.com/@babel/standalone/babel.min.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <!-- XLSX & jsPDF para descargas -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -97,7 +97,6 @@
             </button>
           </header>
 
-          {/* Multibuscador */}
           <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 space-y-3">
             <label className="block text-sm font-semibold text-slate-300">Multibuscador de Guías (Auto-filtrado)</label>
             <textarea
@@ -116,7 +115,6 @@
             </div>
           </div>
 
-          {/* Tabla */}
           <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-x-auto">
             <table className="w-full text-left text-sm text-slate-300">
               <thead className="bg-slate-900 text-slate-400 uppercase text-xs">
@@ -148,7 +146,6 @@
             </table>
           </div>
 
-          {/* Modal Detalle */}
           {selectedGuia && (
             <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
               <div className="bg-slate-800 border border-slate-700 p-6 rounded-2xl max-w-md w-full space-y-4">
