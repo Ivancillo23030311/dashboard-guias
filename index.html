@@ -1,478 +1,448 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dashboard de Guías e Incidencias</title>
-  <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- React & ReactDOM -->
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <!-- Babel para procesar JSX -->
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- Chart.js para el gráfico de pastel -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <!-- XLSX & jsPDF para descargas -->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+ <title>Dashboard de Guías e Incidencias</title>
+ <!-- Tailwind CSS -->
+ <script src="https://cdn.tailwindcss.com"></script>
+ <!-- React & ReactDOM -->
+ <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+ <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+ <!-- Babel para procesar JSX -->
+ <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+ <!-- Chart.js para el gráfico de pastel -->
+ <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+ <!-- XLSX & jsPDF para descargas -->
+ <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+ <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+ <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen">
-  <div id="root"></div>
-
-
-  <script type="text/babel">
-    const { useState, useEffect, useMemo, useRef } = React;
-    const SHEET_ID = '1taS5FDZBKDV0C3dKAFM4aheN9Pn3AF56EHNdtjHN7Lk';
-
-
-    // =====================================================================
-    // NORMALIZACIÓN DE MOTIVOS DE CANCELACIÓN
-    // -----------------------------------------------------------------
-    // Mapeo construido a partir de los 21 valores reales encontrados en la
-    // pestaña "LI Q4 TOREO" del sheet (columna "Motivo Retorn"), validado
-    // con Freddy el 26/ago/2026:
-    //   - "Rechazo por el cliente" -> categoría propia (no es lo mismo que
-    //     "ausente": aquí el cliente SÍ está pero rechaza el paquete).
-    //   - "Cancelado por HH" -> error de sistema (confirmado por Freddy).
-    //   - "carro" / "Moto" / "UNIDAD" -> basura de captura (tipo de
-    //     vehículo metido por error en la columna de motivo), se EXCLUYEN
-    //     del análisis por completo.
-    //   - ":-:" / "Motivo Retorno" -> artefactos de celdas fusionadas /
-    //     encabezado repetido, también se excluyen.
-    // -----------------------------------------------------------------
-    // 1) EXACT_MAP: match exacto (case/acentos-insensitive) para los
-    //    valores ya conocidos -> resultado inmediato y confiable.
-    // 2) CATEGORIAS_CANCELACION: reglas por patrón (regex) como respaldo
-    //    para valores NUEVOS que aparezcan después y no estén en el mapa.
-    // 3) EXCLUIR_PATTERNS: valores que no son un motivo real y se
-    //    descartan del dataset completo (no cuentan en gráfico/tabla).
-    // =====================================================================
-
-
-    function stripAccents(str) {
-      return str
-        .toString()
-        .toLowerCase()
-        .trim()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '');
-    }
-
-
-    const EXACT_MAP = {
-      'cliente ausente': 'Cliente ausente',
-      'cliente no se encuentra': 'Cliente ausente',
-
-
-      'dirreccion erronea / no se puede comunicar con el cliente': 'Domicilio Incorrecto',
-      'direccion incorrecta / fura de cobertura': 'Domicilio Incorrecto',
-      'fuera de cobertura': 'Domicilio Incorrecto',
-      'domicilio incorrecto': 'Domicilio Incorrecto',
-
-
-      'regresa/falta de evidencias': 'Domicilio no visitado',
-
-
-      'rechazo por el cliente': 'Rechazo del Cliente',
-
-
-      'cancelado por hh': 'Error de Sistema',
-      'investigar / cancelado por sistema': 'Error de Sistema',
-
-
-      'danado': 'Otros',
-      'duplicados': 'Otros',
-      'otros': 'Otros',
-      'cancelado': 'Otros',
-      'cubbitos retorno': 'Otros',
-      'sla pq mas atrazado': 'Otros',
-    };
-
-
-    // Valores que NO son un motivo real (basura de captura / artefactos
-    // de celdas fusionadas): se excluyen del dataset por completo.
-    const EXCLUIR_EXACT = new Set([
-      'carro',
-      'moto',
-      'unidad',
-      ':-:',
-      'motivo retorno',
-    ]);
-
-
-    // Respaldo por patrón para valores nuevos no listados arriba.
-    const CATEGORIAS_CANCELACION = [
-      {
-        cat: 'Cliente ausente',
-        patterns: [/\bausente/, /cliente no se encontraba/, /nadie atendio/, /no atendieron/, /no habia nadie/],
-      },
-      {
-        cat: 'Domicilio Incorrecto',
-        patterns: [/domicilio incorrect/, /direccion incorrect/, /domicilio erron/, /direccion erron/, /fuera de cobertura/, /fura de cobertura/],
-      },
-      {
-        cat: 'Domicilio no visitado',
-        patterns: [/no visitad/, /sin visitar/, /no se visito/, /falta.*evidencia/, /ruta no completad/],
-      },
-      {
-        cat: 'Direccion insuficiente',
-        patterns: [/direccion insuficiente/, /domicilio insuficiente/, /datos insuficientes/, /falta.*referencia/, /domicilio incompleto/],
-      },
-      {
-        cat: 'Extraviado/Robado',
-        patterns: [/extraviad/, /robad/, /\brobo\b/, /perdid/, /hurto/],
-      },
-      {
-        cat: 'Rechazo del Cliente',
-        patterns: [/rechaz/],
-      },
-      {
-        cat: 'Error de Sistema',
-        patterns: [/cancelado por hh/, /\bhh\b/, /cancelado por sistema/, /error de sistema/],
-      },
-    ];
-
-
-    // Devuelve null si el registro debe excluirse por completo del dataset.
-    function normalizeIncidencia(raw) {
-      if (!raw || !raw.toString().trim()) return 'Sin Incidencia';
-      const clean = stripAccents(raw);
-
-
-      if (EXCLUIR_EXACT.has(clean)) return null;
-      if (EXACT_MAP[clean]) return EXACT_MAP[clean];
-
-
-      for (const rule of CATEGORIAS_CANCELACION) {
-        if (rule.patterns.some((p) => p.test(clean))) return rule.cat;
-      }
-      // No matcheó nada conocido: se conserva el valor original para
-      // poder detectarlo en la tabla ("sin match") y decidir a qué
-      // categoría agregarlo (o si hay que excluirlo también).
-      return raw.toString().trim();
-    }
-    // =====================================================================
-
-
-    function App() {
-      const [guias, setGuias] = useState([]);
-      const [loading, setLoading] = useState(true);
-      const [searchTerm, setSearchTerm] = useState('');
-      const [selectedGuia, setSelectedGuia] = useState(null);
-      const [soloSinCategorizar, setSoloSinCategorizar] = useState(false);
-      const [excluidosCount, setExcluidosCount] = useState(0);
-
-
-      const chartRef = useRef(null);
-      const chartInstance = useRef(null);
-
-
-      const CATEGORIAS_VALIDAS = [...new Set([...CATEGORIAS_CANCELACION.map((c) => c.cat), ...Object.values(EXACT_MAP)])];
-
-
-      const parseGoogleDate = (dateStr) => {
-        if (!dateStr) return '';
-        if (dateStr.startsWith('Date(')) {
-          const parts = dateStr.replace('Date(', '').replace(')', '').split(',');
-          if (parts.length >= 3) {
-            const year = parts[0];
-            const month = String(parseInt(parts[1]) + 1).padStart(2, '0');
-            const day = String(parts[2]).padStart(2, '0');
-            return `${day}/${month}/${year}`;
-          }
-        }
-        return dateStr;
-      };
-
-
-      const fetchSheetData = async () => {
-        setLoading(true);
-        try {
-          const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json`;
-          const res = await fetch(url);
-          const text = await res.text();
-          const jsonText = text.substring(47, text.length - 2);
-          const json = JSON.parse(jsonText);
-
-
-          const rows = json.table.rows;
-
-
-          const parsed = rows.map((row, i) => {
-            const getVal = (idx) => {
-              if (!row.c || !row.c[idx]) return '';
-              return row.c[idx].f?.toString() || row.c[idx].v?.toString() || '';
-            };
-
-
-            // Busca el texto del almacén descartando valores booleanos (TRUE / FALSE)
-            let rawAlmacen = '';
-            for (let idx = 4; idx < (row.c ? row.c.length : 0); idx++) {
-              const val = getVal(idx);
-              if (val && val.toUpperCase() !== 'TRUE' && val.toUpperCase() !== 'FALSE') {
-                rawAlmacen = val;
-                break;
-              }
-            }
-
-
-            const incidenciaOriginal = getVal(2) || 'Sin Incidencia';
-            const incidenciaNormalizada = normalizeIncidencia(incidenciaOriginal);
-
-
-            return {
-              fecha: parseGoogleDate(getVal(0)),
-              id: getVal(1) || `GUI-${i + 1}`,
-              incidencia: incidenciaNormalizada, // null = excluir del dataset
-              incidenciaOriginal,
-              almacen: rawAlmacen || 'Sin Almacén',
-              detalles: getVal(6) || '',
-            };
-          });
-
-
-          const excluidos = parsed.filter((g) => g.incidencia === null).length;
-          const validos = parsed.filter((g) => g.incidencia !== null);
-
-
-          setExcluidosCount(excluidos);
-          setGuias(validos);
-        } catch (err) {
-          console.error('Error al cargar Google Sheet:', err);
-        } finally {
-          setLoading(false);
-        }
-      };
-
-
-      useEffect(() => { fetchSheetData(); }, []);
-
-
-      const guiasFiltradas = useMemo(() => {
-        let base = guias;
-        if (soloSinCategorizar) {
-          base = base.filter((g) => !CATEGORIAS_VALIDAS.includes(g.incidencia) && g.incidencia !== 'Sin Incidencia');
-        }
-        if (!searchTerm.trim()) return base;
-        const terms = searchTerm.split(/[\s,]+/).map((t) => t.trim().toLowerCase()).filter(Boolean);
-        return base.filter((g) =>
-          terms.some((t) =>
-            g.id.toLowerCase().includes(t) ||
-            g.almacen.toLowerCase().includes(t) ||
-            g.incidencia.toLowerCase().includes(t)
-          )
-        );
-      }, [searchTerm, guias, soloSinCategorizar]);
-
-
-      // Cuenta cuántos registros quedaron sin categorizar (para el aviso)
-      const sinCategorizarCount = useMemo(
-        () => guias.filter((g) => !CATEGORIAS_VALIDAS.includes(g.incidencia) && g.incidencia !== 'Sin Incidencia').length,
-        [guias]
-      );
-
-
-      // Gráfica de Pastel
-      useEffect(() => {
-        if (!chartRef.current || guiasFiltradas.length === 0) return;
-
-
-        const counts = {};
-        guiasFiltradas.forEach((g) => {
-          const inc = g.incidencia || 'Sin Especificar';
-          counts[inc] = (counts[inc] || 0) + 1;
-        });
-
-
-        const labels = Object.keys(counts);
-        const data = Object.values(counts);
-
-
-        if (chartInstance.current) {
-          chartInstance.current.destroy();
-        }
-
-
-        const ctx = chartRef.current.getContext('2d');
-        chartInstance.current = new Chart(ctx, {
-          type: 'pie',
-          data: {
-            labels: labels,
-            datasets: [{
-              data: data,
-              backgroundColor: [
-                '#F43F5E', '#38BDF8', '#FBBF24', '#A855F7',
-                '#34D399', '#FB923C', '#E879F9', '#94A3B8',
-              ],
-              borderWidth: 2,
-              borderColor: '#1E293B',
-            }],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-              legend: {
-                position: 'right',
-                labels: { color: '#CBD5E1', font: { size: 12 } },
-              },
-            },
-          },
-        });
-      }, [guiasFiltradas]);
-
-
-      const exportCSV = () => {
-        const ws = XLSX.utils.json_to_sheet(guiasFiltradas);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Guias');
-        XLSX.writeFile(wb, 'Reporte_Guias.csv', { bookType: 'csv' });
-      };
-
-
-      const exportPDF = () => {
-        const { jsPDF } = window.jspdf;
-        const doc = new jsPDF();
-        doc.text('Reporte de Guías e Incidencias', 14, 15);
-        const tableData = guiasFiltradas.map((g) => [g.id, g.fecha, g.almacen, g.incidencia]);
-        doc.autoTable({
-          head: [['ID Guía', 'Fecha', 'Almacén', 'Incidencia']],
-          body: tableData,
-          startY: 20,
-        });
-        doc.save('Reporte_Guias.pdf');
-      };
-
-
-      return (
-        <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
-          <header className="flex flex-col md:flex-row justify-between items-center border-b border-slate-800 pb-4 gap-4">
-            <div>
-              <h1 className="text-2xl font-bold text-sky-400">Dashboard de Guías e Incidencias</h1>
-              <p className="text-xs text-slate-400 mt-1">Conexión directa a Google Sheets · Motivos unificados</p>
-            </div>
-            <button onClick={fetchSheetData} className="bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition">
-              {loading ? 'Cargando...' : 'Actualizar Datos'}
-            </button>
-          </header>
-
-
-          {/* Aviso de registros excluidos (basura de captura: carro/moto/unidad/artefactos) */}
-          {excluidosCount > 0 && (
-            <div className="bg-slate-800/60 border border-slate-700 text-slate-400 text-xs rounded-lg p-3">
-              ℹ️ Se excluyeron {excluidosCount} registro(s) del análisis por no representar un motivo real de cancelación (ej. "carro", "Moto", "UNIDAD" o artefactos de celdas fusionadas).
-            </div>
-          )}
-
-
-          {/* Aviso de valores sin categorizar */}
-          {sinCategorizarCount > 0 && (
-            <div className="bg-amber-900/30 border border-amber-700/60 text-amber-300 text-sm rounded-lg p-3 flex justify-between items-center">
-              <span>
-                ⚠️ {sinCategorizarCount} registro(s) no matchearon ninguna de las 5 categorías y se muestran con su texto original.
-              </span>
-              <button
-                onClick={() => setSoloSinCategorizar((v) => !v)}
-                className="bg-amber-700/60 hover:bg-amber-700 text-white px-3 py-1 rounded text-xs whitespace-nowrap"
-              >
-                {soloSinCategorizar ? 'Ver todos' : 'Ver solo estos'}
-              </button>
-            </div>
-          )}
-
-
-          {/* Gráfico de Pastel */}
-          <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 space-y-4">
-            <h2 className="text-lg font-bold text-sky-400">Distribución de Incidencias (unificadas)</h2>
-            <div className="h-64 relative">
-              <canvas ref={chartRef}></canvas>
-            </div>
-          </div>
-
-
-          {/* Multibuscador */}
-          <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 space-y-3">
-            <label className="block text-sm font-semibold text-slate-300">Multibuscador de Guías (Auto-filtrado)</label>
-            <textarea
-              rows="2"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Pega aquí guías separadas por comas, espacios o saltos de línea..."
-              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 text-slate-100"
-            />
-            <div className="flex justify-between items-center text-xs">
-              <span className="text-slate-400">Mostrando {guiasFiltradas.length} registros</span>
-              <div className="space-x-2">
-                <button onClick={exportCSV} className="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded">Descargar CSV</button>
-                <button onClick={exportPDF} className="bg-rose-700 hover:bg-rose-600 text-white px-3 py-1.5 rounded">Descargar PDF</button>
-              </div>
-            </div>
-          </div>
-
-
-          {/* Tabla de Guías con Almacén Filtrado */}
-          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-x-auto">
-            <table className="w-full text-left text-sm text-slate-300">
-              <thead className="bg-slate-900 text-slate-400 uppercase text-xs">
-                <tr>
-                  <th className="p-3">ID Guía</th>
-                  <th className="p-3">Fecha</th>
-                  <th className="p-3">Almacén</th>
-                  <th className="p-3">Incidencia</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-700/50">
-                {guiasFiltradas.map((g) => {
-                  const noCategorizado = !CATEGORIAS_VALIDAS.includes(g.incidencia) && g.incidencia !== 'Sin Incidencia';
-                  return (
-                    <tr key={g.id} onClick={() => setSelectedGuia(g)} className="hover:bg-slate-700/50 cursor-pointer">
-                      <td className="p-3 font-semibold text-sky-400">{g.id}</td>
-                      <td className="p-3">{g.fecha}</td>
-                      <td className="p-3">
-                        <span className="bg-slate-900 text-emerald-400 border border-emerald-800/60 px-2.5 py-1 rounded-md text-xs font-semibold">
-                          {g.almacen}
-                        </span>
-                      </td>
-                      <td className={`p-3 font-medium ${noCategorizado ? 'text-amber-400' : 'text-rose-400'}`}>
-                        {g.incidencia}
-                        {noCategorizado && <span className="ml-1 text-[10px] text-amber-500">(sin match)</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-
-          {/* Modal Detalle */}
-          {selectedGuia && (
-            <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-              <div className="bg-slate-800 border border-slate-700 p-6 rounded-2xl max-w-md w-full space-y-4">
-                <h3 className="text-lg font-bold text-sky-400">Detalle: {selectedGuia.id}</h3>
-                <div className="text-sm space-y-2 text-slate-300">
-                  <p><strong>Fecha:</strong> {selectedGuia.fecha}</p>
-                  <p><strong>Almacén:</strong> {selectedGuia.almacen}</p>
-                  <p><strong>Incidencia (unificada):</strong> {selectedGuia.incidencia}</p>
-                  {selectedGuia.incidenciaOriginal !== selectedGuia.incidencia && (
-                    <p><strong>Texto original:</strong> {selectedGuia.incidenciaOriginal}</p>
-                  )}
-                  <p><strong>Detalles:</strong> {selectedGuia.detalles || 'Sin observaciones adicionales'}</p>
-                </div>
-                <button onClick={() => setSelectedGuia(null)} className="w-full bg-sky-600 hover:bg-sky-500 text-white py-2 rounded-lg font-medium">
-                  Cerrar
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    }
-
-
-    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
-  </script>
+ <div id="root"></div>
+ 
+ <script type="text/babel">
+   const { useState, useEffect, useMemo, useRef } = React;
+   const SHEET_ID = '1taS5FDZBKDV0C3dKAFM4aheN9Pn3AF56EHNdtjHN7Lk';
+ 
+   // =====================================================================
+   // NORMALIZACIÓN DE MOTIVOS DE CANCELACIÓN
+   // -----------------------------------------------------------------
+   // Mapeo construido a partir de los 21 valores reales encontrados en la
+   // pestaña "LI Q4 TOREO" del sheet (columna "Motivo Retorn"), validado
+   // con Freddy el 26/ago/2026:
+   //   - "Rechazo por el cliente" -> categoría propia (no es lo mismo que
+   //     "ausente": aquí el cliente SÍ está pero rechaza el paquete).
+   //   - "Cancelado por HH" -> error de sistema (confirmado por Freddy).
+   //   - "carro" / "Moto" / "UNIDAD" -> basura de captura (tipo de
+   //     vehículo metido por error en la columna de motivo), se EXCLUYEN
+   //     del análisis por completo.
+   //   - ":-:" / "Motivo Retorno" -> artefactos de celdas fusionadas /
+   //     encabezado repetido, también se excluyen.
+   // -----------------------------------------------------------------
+   // 1) EXACT_MAP: match exacto (case/acentos-insensitive) para los
+   //    valores ya conocidos -> resultado inmediato y confiable.
+   // 2) CATEGORIAS_CANCELACION: reglas por patrón (regex) como respaldo
+   //    para valores NUEVOS que aparezcan después y no estén en el mapa.
+   // 3) EXCLUIR_PATTERNS: valores que no son un motivo real y se
+   //    descartan del dataset completo (no cuentan en gráfico/tabla).
+   // =====================================================================
+ 
+   function stripAccents(str) {
+     return str
+       .toString()
+       .toLowerCase()
+       .trim()
+       .normalize('NFD')
+       .replace(/[\u0300-\u036f]/g, '');
+   }
+ 
+   const EXACT_MAP = {
+     'cliente ausente': 'Cliente ausente',
+     'cliente no se encuentra': 'Cliente ausente',
+ 
+     'dirreccion erronea / no se puede comunicar con el cliente': 'Domicilio Incorrecto',
+     'direccion incorrecta / fura de cobertura': 'Domicilio Incorrecto',
+     'fuera de cobertura': 'Domicilio Incorrecto',
+     'domicilio incorrecto': 'Domicilio Incorrecto',
+ 
+     'regresa/falta de evidencias': 'Domicilio no visitado',
+ 
+     'rechazo por el cliente': 'Rechazo del Cliente',
+ 
+     'cancelado por hh': 'Error de Sistema',
+     'investigar / cancelado por sistema': 'Error de Sistema',
+ 
+     'danado': 'Otros',
+     'duplicados': 'Otros',
+     'otros': 'Otros',
+     'cancelado': 'Otros',
+     'cubbitos retorno': 'Otros',
+     'sla pq mas atrazado': 'Otros',
+     'guia invalida': 'Otros',
+ 
+     'cubbito vencido': 'Cubbito Vencido',
+   };
+ 
+   // Categorías "extra" que no vienen de EXACT_MAP ni de reglas por
+   // patrón (se asignan por lógica especial en normalizeIncidencia).
+   const CATEGORIA_LOGISTICA_INVERSA = 'Logística Inversa';
+ 
+   // Valores que NO son un motivo real (basura de captura / artefactos
+   // de celdas fusionadas): se excluyen del dataset por completo.
+   const EXCLUIR_EXACT = new Set([
+     'carro',
+     'moto',
+     'unidad',
+     ':-:',
+     'motivo retorno',
+   ]);
+ 
+   // Respaldo por patrón para valores nuevos no listados arriba.
+   const CATEGORIAS_CANCELACION = [
+     {
+       cat: 'Cliente ausente',
+       patterns: [/\bausente/, /cliente no se encontraba/, /nadie atendio/, /no atendieron/, /no habia nadie/],
+     },
+     {
+       cat: 'Domicilio Incorrecto',
+       patterns: [/domicilio incorrect/, /direccion incorrect/, /domicilio erron/, /direccion erron/, /fuera de cobertura/, /fura de cobertura/],
+     },
+     {
+       cat: 'Domicilio no visitado',
+       patterns: [/no visitad/, /sin visitar/, /no se visito/, /falta.*evidencia/, /ruta no completad/],
+     },
+     {
+       cat: 'Direccion insuficiente',
+       patterns: [/direccion insuficiente/, /domicilio insuficiente/, /datos insuficientes/, /falta.*referencia/, /domicilio incompleto/],
+     },
+     {
+       cat: 'Extraviado/Robado',
+       patterns: [/extraviad/, /robad/, /\brobo\b/, /perdid/, /hurto/],
+     },
+     {
+       cat: 'Rechazo del Cliente',
+       patterns: [/rechaz/],
+     },
+     {
+       cat: 'Error de Sistema',
+       patterns: [/cancelado por hh/, /\bhh\b/, /cancelado por sistema/, /error de sistema/],
+     },
+   ];
+ 
+   // Devuelve null si el registro debe excluirse por completo del dataset.
+   function normalizeIncidencia(raw) {
+     if (!raw || !raw.toString().trim()) return 'Sin Incidencia';
+     const clean = stripAccents(raw);
+ 
+     if (EXCLUIR_EXACT.has(clean)) return null;
+ 
+     // Regla explícita: cualquier valor que mencione "LI" (LI 1 VISITA,
+     // LI 2 VISITAS, etc.) se clasifica como Logística Inversa, con
+     // PRIORIDAD sobre cualquier otro contenido del texto (ej. aunque
+     // también diga "dirección errónea").
+     if (/\bli\b/.test(clean)) return CATEGORIA_LOGISTICA_INVERSA;
+ 
+     if (EXACT_MAP[clean]) return EXACT_MAP[clean];
+ 
+     for (const rule of CATEGORIAS_CANCELACION) {
+       if (rule.patterns.some((p) => p.test(clean))) return rule.cat;
+     }
+     // No matcheó nada conocido: se conserva el valor original para
+     // poder detectarlo en la tabla ("sin match") y decidir a qué
+     // categoría agregarlo (o si hay que excluirlo también).
+     return raw.toString().trim();
+   }
+   // =====================================================================
+ 
+   function App() {
+     const [guias, setGuias] = useState([]);
+     const [loading, setLoading] = useState(true);
+     const [searchTerm, setSearchTerm] = useState('');
+     const [selectedGuia, setSelectedGuia] = useState(null);
+     const [soloSinCategorizar, setSoloSinCategorizar] = useState(false);
+     const [excluidosCount, setExcluidosCount] = useState(0);
+ 
+     const chartRef = useRef(null);
+     const chartInstance = useRef(null);
+ 
+     const CATEGORIAS_VALIDAS = [...new Set([...CATEGORIAS_CANCELACION.map((c) => c.cat), ...Object.values(EXACT_MAP), CATEGORIA_LOGISTICA_INVERSA])];
+ 
+     const parseGoogleDate = (dateStr) => {
+       if (!dateStr) return '';
+       if (dateStr.startsWith('Date(')) {
+         const parts = dateStr.replace('Date(', '').replace(')', '').split(',');
+         if (parts.length >= 3) {
+           const year = parts[0];
+           const month = String(parseInt(parts[1]) + 1).padStart(2, '0');
+           const day = String(parts[2]).padStart(2, '0');
+           return `${day}/${month}/${year}`;
+         }
+       }
+       return dateStr;
+     };
+ 
+     const fetchSheetData = async () => {
+       setLoading(true);
+       try {
+         const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json`;
+         const res = await fetch(url);
+         const text = await res.text();
+         const jsonText = text.substring(47, text.length - 2);
+         const json = JSON.parse(jsonText);
+ 
+         const rows = json.table.rows;
+ 
+         const parsed = rows.map((row, i) => {
+           const getVal = (idx) => {
+             if (!row.c || !row.c[idx]) return '';
+             return row.c[idx].f?.toString() || row.c[idx].v?.toString() || '';
+           };
+ 
+           // Busca el texto del almacén descartando valores booleanos (TRUE / FALSE)
+           let rawAlmacen = '';
+           for (let idx = 4; idx < (row.c ? row.c.length : 0); idx++) {
+             const val = getVal(idx);
+             if (val && val.toUpperCase() !== 'TRUE' && val.toUpperCase() !== 'FALSE') {
+               rawAlmacen = val;
+               break;
+             }
+           }
+ 
+           const incidenciaOriginal = getVal(2) || 'Sin Incidencia';
+           const incidenciaNormalizada = normalizeIncidencia(incidenciaOriginal);
+ 
+           return {
+             fecha: parseGoogleDate(getVal(0)),
+             id: getVal(1) || `GUI-${i + 1}`,
+             incidencia: incidenciaNormalizada, // null = excluir del dataset
+             incidenciaOriginal,
+             almacen: rawAlmacen || 'Sin Almacén',
+             detalles: getVal(6) || '',
+           };
+         });
+ 
+         const excluidos = parsed.filter((g) => g.incidencia === null).length;
+         const validos = parsed.filter((g) => g.incidencia !== null);
+ 
+         setExcluidosCount(excluidos);
+         setGuias(validos);
+       } catch (err) {
+         console.error('Error al cargar Google Sheet:', err);
+       } finally {
+         setLoading(false);
+       }
+     };
+ 
+     useEffect(() => { fetchSheetData(); }, []);
+ 
+     const guiasFiltradas = useMemo(() => {
+       let base = guias;
+       if (soloSinCategorizar) {
+         base = base.filter((g) => !CATEGORIAS_VALIDAS.includes(g.incidencia) && g.incidencia !== 'Sin Incidencia');
+       }
+       if (!searchTerm.trim()) return base;
+       const terms = searchTerm.split(/[\s,]+/).map((t) => t.trim().toLowerCase()).filter(Boolean);
+       return base.filter((g) =>
+         terms.some((t) =>
+           g.id.toLowerCase().includes(t) ||
+           g.almacen.toLowerCase().includes(t) ||
+           g.incidencia.toLowerCase().includes(t)
+         )
+       );
+     }, [searchTerm, guias, soloSinCategorizar]);
+ 
+     // Cuenta cuántos registros quedaron sin categorizar (para el aviso)
+     const sinCategorizarCount = useMemo(
+       () => guias.filter((g) => !CATEGORIAS_VALIDAS.includes(g.incidencia) && g.incidencia !== 'Sin Incidencia').length,
+       [guias]
+     );
+ 
+     // Gráfica de Pastel
+     useEffect(() => {
+       if (!chartRef.current || guiasFiltradas.length === 0) return;
+ 
+       const counts = {};
+       guiasFiltradas.forEach((g) => {
+         const inc = g.incidencia || 'Sin Especificar';
+         counts[inc] = (counts[inc] || 0) + 1;
+       });
+ 
+       const labels = Object.keys(counts);
+       const data = Object.values(counts);
+ 
+       if (chartInstance.current) {
+         chartInstance.current.destroy();
+       }
+ 
+       const ctx = chartRef.current.getContext('2d');
+       chartInstance.current = new Chart(ctx, {
+         type: 'pie',
+         data: {
+           labels: labels,
+           datasets: [{
+             data: data,
+             backgroundColor: [
+               '#F43F5E', '#38BDF8', '#FBBF24', '#A855F7',
+               '#34D399', '#FB923C', '#E879F9', '#94A3B8',
+             ],
+             borderWidth: 2,
+             borderColor: '#1E293B',
+           }],
+         },
+         options: {
+           responsive: true,
+           maintainAspectRatio: false,
+           plugins: {
+             legend: {
+               position: 'right',
+               labels: { color: '#CBD5E1', font: { size: 12 } },
+             },
+           },
+         },
+       });
+     }, [guiasFiltradas]);
+ 
+     const exportCSV = () => {
+       const ws = XLSX.utils.json_to_sheet(guiasFiltradas);
+       const wb = XLSX.utils.book_new();
+       XLSX.utils.book_append_sheet(wb, ws, 'Guias');
+       XLSX.writeFile(wb, 'Reporte_Guias.csv', { bookType: 'csv' });
+     };
+ 
+     const exportPDF = () => {
+       const { jsPDF } = window.jspdf;
+       const doc = new jsPDF();
+       doc.text('Reporte de Guías e Incidencias', 14, 15);
+       const tableData = guiasFiltradas.map((g) => [g.id, g.fecha, g.almacen, g.incidencia]);
+       doc.autoTable({
+         head: [['ID Guía', 'Fecha', 'Almacén', 'Incidencia']],
+         body: tableData,
+         startY: 20,
+       });
+       doc.save('Reporte_Guias.pdf');
+     };
+ 
+     return (
+       <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
+         <header className="flex flex-col md:flex-row justify-between items-center border-b border-slate-800 pb-4 gap-4">
+           <div>
+             <h1 className="text-2xl font-bold text-sky-400">Dashboard de Guías e Incidencias</h1>
+             <p className="text-xs text-slate-400 mt-1">Conexión directa a Google Sheets · Motivos unificados</p>
+           </div>
+           <button onClick={fetchSheetData} className="bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition">
+             {loading ? 'Cargando...' : 'Actualizar Datos'}
+           </button>
+         </header>
+ 
+         {/* Aviso de registros excluidos (basura de captura: carro/moto/unidad/artefactos) */}
+         {excluidosCount > 0 && (
+           <div className="bg-slate-800/60 border border-slate-700 text-slate-400 text-xs rounded-lg p-3">
+             ℹ️ Se excluyeron {excluidosCount} registro(s) del análisis por no representar un motivo real de cancelación (ej. "carro", "Moto", "UNIDAD" o artefactos de celdas fusionadas).
+           </div>
+         )}
+ 
+         {/* Aviso de valores sin categorizar */}
+         {sinCategorizarCount > 0 && (
+           <div className="bg-amber-900/30 border border-amber-700/60 text-amber-300 text-sm rounded-lg p-3 flex justify-between items-center">
+             <span>
+               ⚠️ {sinCategorizarCount} registro(s) no matchearon ninguna de las 5 categorías y se muestran con su texto original.
+             </span>
+             <button
+               onClick={() => setSoloSinCategorizar((v) => !v)}
+               className="bg-amber-700/60 hover:bg-amber-700 text-white px-3 py-1 rounded text-xs whitespace-nowrap"
+             >
+               {soloSinCategorizar ? 'Ver todos' : 'Ver solo estos'}
+             </button>
+           </div>
+         )}
+ 
+         {/* Gráfico de Pastel */}
+         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 space-y-4">
+           <h2 className="text-lg font-bold text-sky-400">Distribución de Incidencias (unificadas)</h2>
+           <div className="h-64 relative">
+             <canvas ref={chartRef}></canvas>
+           </div>
+         </div>
+ 
+         {/* Multibuscador */}
+         <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 space-y-3">
+           <label className="block text-sm font-semibold text-slate-300">Multibuscador de Guías (Auto-filtrado)</label>
+           <textarea
+             rows="2"
+             value={searchTerm}
+             onChange={(e) => setSearchTerm(e.target.value)}
+             placeholder="Pega aquí guías separadas por comas, espacios o saltos de línea..."
+             className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 text-slate-100"
+           />
+           <div className="flex justify-between items-center text-xs">
+             <span className="text-slate-400">Mostrando {guiasFiltradas.length} registros</span>
+             <div className="space-x-2">
+               <button onClick={exportCSV} className="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded">Descargar CSV</button>
+               <button onClick={exportPDF} className="bg-rose-700 hover:bg-rose-600 text-white px-3 py-1.5 rounded">Descargar PDF</button>
+             </div>
+           </div>
+         </div>
+ 
+         {/* Tabla de Guías con Almacén Filtrado */}
+         <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-x-auto">
+           <table className="w-full text-left text-sm text-slate-300">
+             <thead className="bg-slate-900 text-slate-400 uppercase text-xs">
+               <tr>
+                 <th className="p-3">ID Guía</th>
+                 <th className="p-3">Fecha</th>
+                 <th className="p-3">Almacén</th>
+                 <th className="p-3">Incidencia</th>
+               </tr>
+             </thead>
+             <tbody className="divide-y divide-slate-700/50">
+               {guiasFiltradas.map((g) => {
+                 const noCategorizado = !CATEGORIAS_VALIDAS.includes(g.incidencia) && g.incidencia !== 'Sin Incidencia';
+                 return (
+                   <tr key={g.id} onClick={() => setSelectedGuia(g)} className="hover:bg-slate-700/50 cursor-pointer">
+                     <td className="p-3 font-semibold text-sky-400">{g.id}</td>
+                     <td className="p-3">{g.fecha}</td>
+                     <td className="p-3">
+                       <span className="bg-slate-900 text-emerald-400 border border-emerald-800/60 px-2.5 py-1 rounded-md text-xs font-semibold">
+                         {g.almacen}
+                       </span>
+                     </td>
+                     <td className={`p-3 font-medium ${noCategorizado ? 'text-amber-400' : 'text-rose-400'}`}>
+                       {g.incidencia}
+                       {noCategorizado && <span className="ml-1 text-[10px] text-amber-500">(sin match)</span>}
+                     </td>
+                   </tr>
+                 );
+               })}
+             </tbody>
+           </table>
+         </div>
+ 
+         {/* Modal Detalle */}
+         {selectedGuia && (
+           <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+             <div className="bg-slate-800 border border-slate-700 p-6 rounded-2xl max-w-md w-full space-y-4">
+               <h3 className="text-lg font-bold text-sky-400">Detalle: {selectedGuia.id}</h3>
+               <div className="text-sm space-y-2 text-slate-300">
+                 <p><strong>Fecha:</strong> {selectedGuia.fecha}</p>
+                 <p><strong>Almacén:</strong> {selectedGuia.almacen}</p>
+                 <p><strong>Incidencia (unificada):</strong> {selectedGuia.incidencia}</p>
+                 {selectedGuia.incidenciaOriginal !== selectedGuia.incidencia && (
+                   <p><strong>Texto original:</strong> {selectedGuia.incidenciaOriginal}</p>
+                 )}
+                 <p><strong>Detalles:</strong> {selectedGuia.detalles || 'Sin observaciones adicionales'}</p>
+               </div>
+               <button onClick={() => setSelectedGuia(null)} className="w-full bg-sky-600 hover:bg-sky-500 text-white py-2 rounded-lg font-medium">
+                 Cerrar
+               </button>
+             </div>
+           </div>
+         )}
+       </div>
+     );
+   }
+ 
+   ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+ </script>
 </body>
 </html>
