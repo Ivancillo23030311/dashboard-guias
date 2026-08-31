@@ -20,11 +20,13 @@
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen">
  <div id="root"></div>
- 
+
+
  <script type="text/babel">
    const { useState, useEffect, useMemo, useRef } = React;
    const SHEET_ID = '1taS5FDZBKDV0C3dKAFM4aheN9Pn3AF56EHNdtjHN7Lk';
- 
+
+
    // =====================================================================
    // NORMALIZACIÓN DE MOTIVOS DE CANCELACIÓN
    // -----------------------------------------------------------------
@@ -47,7 +49,8 @@
    // 3) EXCLUIR_PATTERNS: valores que no son un motivo real y se
    //    descartan del dataset completo (no cuentan en gráfico/tabla).
    // =====================================================================
- 
+
+
    function stripAccents(str) {
      return str
        .toString()
@@ -56,23 +59,29 @@
        .normalize('NFD')
        .replace(/[\u0300-\u036f]/g, '');
    }
- 
+
+
    const EXACT_MAP = {
      'cliente ausente': 'Cliente ausente',
      'cliente no se encuentra': 'Cliente ausente',
- 
+
+
      'dirreccion erronea / no se puede comunicar con el cliente': 'Domicilio Incorrecto',
      'direccion incorrecta / fura de cobertura': 'Domicilio Incorrecto',
      'fuera de cobertura': 'Domicilio Incorrecto',
      'domicilio incorrecto': 'Domicilio Incorrecto',
- 
+
+
      'regresa/falta de evidencias': 'Domicilio no visitado',
- 
+
+
      'rechazo por el cliente': 'Rechazo del Cliente',
- 
+
+
      'cancelado por hh': 'Error de Sistema',
      'investigar / cancelado por sistema': 'Error de Sistema',
- 
+
+
      'danado': 'Otros',
      'duplicados': 'Otros',
      'otros': 'Otros',
@@ -80,14 +89,17 @@
      'cubbitos retorno': 'Otros',
      'sla pq mas atrazado': 'Otros',
      'guia invalida': 'Otros',
- 
+
+
      'cubbito vencido': 'Cubbito Vencido',
    };
- 
+
+
    // Categorías "extra" que no vienen de EXACT_MAP ni de reglas por
    // patrón (se asignan por lógica especial en normalizeIncidencia).
    const CATEGORIA_LOGISTICA_INVERSA = 'Logística Inversa';
- 
+
+
    // Valores que NO son un motivo real (basura de captura / artefactos
    // de celdas fusionadas): se excluyen del dataset por completo.
    const EXCLUIR_EXACT = new Set([
@@ -97,7 +109,8 @@
      ':-:',
      'motivo retorno',
    ]);
- 
+
+
    // Respaldo por patrón para valores nuevos no listados arriba.
    const CATEGORIAS_CANCELACION = [
      {
@@ -129,22 +142,27 @@
        patterns: [/cancelado por hh/, /\bhh\b/, /cancelado por sistema/, /error de sistema/],
      },
    ];
- 
+
+
    // Devuelve null si el registro debe excluirse por completo del dataset.
    function normalizeIncidencia(raw) {
      if (!raw || !raw.toString().trim()) return 'Sin Incidencia';
      const clean = stripAccents(raw);
- 
+
+
      if (EXCLUIR_EXACT.has(clean)) return null;
- 
+
+
      // Regla explícita: cualquier valor que mencione "LI" (LI 1 VISITA,
      // LI 2 VISITAS, etc.) se clasifica como Logística Inversa, con
      // PRIORIDAD sobre cualquier otro contenido del texto (ej. aunque
      // también diga "dirección errónea").
      if (/\bli\b/.test(clean)) return CATEGORIA_LOGISTICA_INVERSA;
- 
+
+
      if (EXACT_MAP[clean]) return EXACT_MAP[clean];
- 
+
+
      for (const rule of CATEGORIAS_CANCELACION) {
        if (rule.patterns.some((p) => p.test(clean))) return rule.cat;
      }
@@ -154,7 +172,8 @@
      return raw.toString().trim();
    }
    // =====================================================================
- 
+
+
    function App() {
      const [guias, setGuias] = useState([]);
      const [loading, setLoading] = useState(true);
@@ -162,12 +181,15 @@
      const [selectedGuia, setSelectedGuia] = useState(null);
      const [soloSinCategorizar, setSoloSinCategorizar] = useState(false);
      const [excluidosCount, setExcluidosCount] = useState(0);
- 
+
+
      const chartRef = useRef(null);
      const chartInstance = useRef(null);
- 
+
+
      const CATEGORIAS_VALIDAS = [...new Set([...CATEGORIAS_CANCELACION.map((c) => c.cat), ...Object.values(EXACT_MAP), CATEGORIA_LOGISTICA_INVERSA])];
- 
+
+
      const parseGoogleDate = (dateStr) => {
        if (!dateStr) return '';
        if (dateStr.startsWith('Date(')) {
@@ -176,29 +198,33 @@
            const year = parts[0];
            const month = String(parseInt(parts[1]) + 1).padStart(2, '0');
            const day = String(parts[2]).padStart(2, '0');
-           return `${day}/${month}/${year}`;
+           return ${day}/${month}/${year};
          }
        }
        return dateStr;
      };
- 
+
+
      const fetchSheetData = async () => {
        setLoading(true);
        try {
-         const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json`;
+         const url = https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json;
          const res = await fetch(url);
          const text = await res.text();
          const jsonText = text.substring(47, text.length - 2);
          const json = JSON.parse(jsonText);
- 
+
+
          const rows = json.table.rows;
- 
+
+
          const parsed = rows.map((row, i) => {
            const getVal = (idx) => {
              if (!row.c || !row.c[idx]) return '';
              return row.c[idx].f?.toString() || row.c[idx].v?.toString() || '';
            };
- 
+
+
            // Busca el texto del almacén descartando valores booleanos (TRUE / FALSE)
            let rawAlmacen = '';
            for (let idx = 4; idx < (row.c ? row.c.length : 0); idx++) {
@@ -208,23 +234,27 @@
                break;
              }
            }
- 
+
+
            const incidenciaOriginal = getVal(2) || 'Sin Incidencia';
            const incidenciaNormalizada = normalizeIncidencia(incidenciaOriginal);
- 
+
+
            return {
              fecha: parseGoogleDate(getVal(0)),
-             id: getVal(1) || `GUI-${i + 1}`,
+             id: getVal(1) || GUI-${i + 1},
              incidencia: incidenciaNormalizada, // null = excluir del dataset
              incidenciaOriginal,
              almacen: rawAlmacen || 'Sin Almacén',
              detalles: getVal(6) || '',
            };
          });
- 
+
+
          const excluidos = parsed.filter((g) => g.incidencia === null).length;
          const validos = parsed.filter((g) => g.incidencia !== null);
- 
+
+
          setExcluidosCount(excluidos);
          setGuias(validos);
        } catch (err) {
@@ -233,9 +263,11 @@
          setLoading(false);
        }
      };
- 
+
+
      useEffect(() => { fetchSheetData(); }, []);
- 
+
+
      const guiasFiltradas = useMemo(() => {
        let base = guias;
        if (soloSinCategorizar) {
@@ -251,30 +283,36 @@
          )
        );
      }, [searchTerm, guias, soloSinCategorizar]);
- 
+
+
      // Cuenta cuántos registros quedaron sin categorizar (para el aviso)
      const sinCategorizarCount = useMemo(
        () => guias.filter((g) => !CATEGORIAS_VALIDAS.includes(g.incidencia) && g.incidencia !== 'Sin Incidencia').length,
        [guias]
      );
- 
+
+
      // Gráfica de Pastel
      useEffect(() => {
        if (!chartRef.current || guiasFiltradas.length === 0) return;
- 
+
+
        const counts = {};
        guiasFiltradas.forEach((g) => {
          const inc = g.incidencia || 'Sin Especificar';
          counts[inc] = (counts[inc] || 0) + 1;
        });
- 
+
+
        const labels = Object.keys(counts);
        const data = Object.values(counts);
- 
+
+
        if (chartInstance.current) {
          chartInstance.current.destroy();
        }
- 
+
+
        const ctx = chartRef.current.getContext('2d');
        chartInstance.current = new Chart(ctx, {
          type: 'pie',
@@ -302,14 +340,16 @@
          },
        });
      }, [guiasFiltradas]);
- 
+
+
      const exportCSV = () => {
        const ws = XLSX.utils.json_to_sheet(guiasFiltradas);
        const wb = XLSX.utils.book_new();
        XLSX.utils.book_append_sheet(wb, ws, 'Guias');
        XLSX.writeFile(wb, 'Reporte_Guias.csv', { bookType: 'csv' });
      };
- 
+
+
      const exportPDF = () => {
        const { jsPDF } = window.jspdf;
        const doc = new jsPDF();
@@ -322,7 +362,8 @@
        });
        doc.save('Reporte_Guias.pdf');
      };
- 
+
+
      return (
        <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
          <header className="flex flex-col md:flex-row justify-between items-center border-b border-slate-800 pb-4 gap-4">
@@ -334,19 +375,21 @@
              {loading ? 'Cargando...' : 'Actualizar Datos'}
            </button>
          </header>
- 
+
+
          {/* Aviso de registros excluidos (basura de captura: carro/moto/unidad/artefactos) */}
          {excluidosCount > 0 && (
            <div className="bg-slate-800/60 border border-slate-700 text-slate-400 text-xs rounded-lg p-3">
-             ℹ️ Se excluyeron {excluidosCount} registro(s) del análisis por no representar un motivo real de cancelación (ej. "carro", "Moto", "UNIDAD" o artefactos de celdas fusionadas).
+             :information_source: Se excluyeron {excluidosCount} registro(s) del análisis por no representar un motivo real de cancelación (ej. "carro", "Moto", "UNIDAD" o artefactos de celdas fusionadas).
            </div>
          )}
- 
+
+
          {/* Aviso de valores sin categorizar */}
          {sinCategorizarCount > 0 && (
            <div className="bg-amber-900/30 border border-amber-700/60 text-amber-300 text-sm rounded-lg p-3 flex justify-between items-center">
              <span>
-               ⚠️ {sinCategorizarCount} registro(s) no matchearon ninguna de las 5 categorías y se muestran con su texto original.
+               :warning: {sinCategorizarCount} registro(s) no matchearon ninguna de las 5 categorías y se muestran con su texto original.
              </span>
              <button
                onClick={() => setSoloSinCategorizar((v) => !v)}
@@ -356,7 +399,8 @@
              </button>
            </div>
          )}
- 
+
+
          {/* Gráfico de Pastel */}
          <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 space-y-4">
            <h2 className="text-lg font-bold text-sky-400">Distribución de Incidencias (unificadas)</h2>
@@ -364,7 +408,8 @@
              <canvas ref={chartRef}></canvas>
            </div>
          </div>
- 
+
+
          {/* Multibuscador */}
          <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 space-y-3">
            <label className="block text-sm font-semibold text-slate-300">Multibuscador de Guías (Auto-filtrado)</label>
@@ -383,7 +428,8 @@
              </div>
            </div>
          </div>
- 
+
+
          {/* Tabla de Guías con Almacén Filtrado */}
          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-x-auto">
            <table className="w-full text-left text-sm text-slate-300">
@@ -407,7 +453,7 @@
                          {g.almacen}
                        </span>
                      </td>
-                     <td className={`p-3 font-medium ${noCategorizado ? 'text-amber-400' : 'text-rose-400'}`}>
+                     <td className={p-3 font-medium ${noCategorizado ? 'text-amber-400' : 'text-rose-400'}}>
                        {g.incidencia}
                        {noCategorizado && <span className="ml-1 text-[10px] text-amber-500">(sin match)</span>}
                      </td>
@@ -417,7 +463,8 @@
              </tbody>
            </table>
          </div>
- 
+
+
          {/* Modal Detalle */}
          {selectedGuia && (
            <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
@@ -441,7 +488,8 @@
        </div>
      );
    }
- 
+
+
    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
  </script>
 </body>
